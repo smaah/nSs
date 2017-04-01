@@ -1,0 +1,727 @@
+#ifndef SOLVER_HPP
+#define SOLVER_HPP
+
+#include "Array.hh"
+#include "Data.hh"
+#include <stdio.h>
+#include <cstdlib>
+#include <cmath>
+#include <cstring>
+#include <algorithm>
+#include "VTKFileWriter.hh"
+#include "Particle.hh"
+
+#define PI 3.14159265
+
+typedef enum {NOSLIP=1, SLIP, OUTFLOW, PERIODIC } BCTYPE;
+
+using namespace std;
+
+class Solver
+{
+
+  public:
+
+  Solver(const int& xm,const int& ym,const int& mait,const int& bcE, const int& bcW,const int&bcN,const int& bcS, const double& dlx,const double& dly,const double& tol,const double& omga, const double& Re, const double& gamma, const double& gx, const double& gy,const double &tau, const double &tend,double & dt, string& nam) : \
+    xmax(xm), ymax(ym), maxit(mait),bcE(bcE),bcW(bcW),bcN(bcN),bcS(bcS),delx(dlx), dely(dly),eps(tol),omega(omga),Re(Re),gamma(gamma),gx(gx),gy(gy),tau(tau),tend(tend), dt(dt),vect(2,vector<double> (xm*ym)),name(nam) {
+
+    length.push_back(delx);
+    length.push_back(dely);
+    dimension.push_back(xmax);
+    dimension.push_back(ymax);
+    //cout<<"........"<<xmax<<".."<< ymax<<".."<<maxit<<".."<<delx<<".." <<dely<<".."<<dt<<".."<<eps<<".."<<omega<<".."<<Re<<".."<<gamma<<".."<<gx<<".."<<gy<<".."<<tau<<".."<<tend<<endl;
+  }
+
+  ~Solver(){
+  }
+
+  //Iterative solution
+  void SOLVE(Array& pp, Array& ff, Array& U, Array& V, Array& F, Array& G,Data& mod,ParticleLine& Part, double xlength);
+
+  //Boundary condition
+  void SETBCOND(Array& U, Array& V, Array& F, Array& G);
+
+  //Computation of F and G
+  void COMP_FG(Array&F, Array& G, Array&U,Array&V,Data& mod);
+
+   // Solves the 2D Poisson's equation
+  bool poisson(Array&pp, Array& ff,Data& mod);
+
+   // Output pressure and right hand sideconst int xmax, const int ymax, const double const delx,const double dely
+  bool WriteResults(Array& pp, string name, int xmax, int ymax, int mode);
+
+  // Initializes the pressure and the right hand side fields according to the type of problem
+  void initFields(Array& U,Data& dom);
+
+  //Compute the RHS of pressure equation
+  void COMP_RHS(Array &ff,Array &F, Array& G,Data& mod);
+
+  //Update U and V
+  void ADAP_UV(Array &U, Array& V, Array & F, Array & G, Array &pp,Data& mod);
+  
+  //Special inflow condition
+  void inflow(Array& U, Array& V, Array& F,Array& G,double u,Data& dom);
+
+  void AVG(Array& U, Array& V){
+    for(int j=0; j<ymax;j++)
+      for(int i=0;i<xmax;i++){
+	vect[0][j*xmax+i]=(U(i,j+1)+U(i+1,j+1))/2;
+	vect[1][j*xmax+i]=(V(i+1,j)+V(i+1,j+1))/2;
+      } 
+  }
+
+
+  void Pres(Array& PP){
+    vect2.clear();
+    for(int j=1; j<=ymax;j++)
+      for(int i=1;i<=xmax;i++){
+	vect2.push_back(PP(i,j));
+      }
+  }
+  
+  void COMP_PSI_ZETA(Data& dom, Array& U, Array& V){
+    PSI.clear();
+    ZETA.clear();
+    double uup(0.0), vright(0.0);
+
+    for(int j=0;j<ymax;j++)
+      for(int i=0;i<xmax;i++){
+
+	if(j==0)
+	  PSI.push_back(0.0);
+	else{
+	  if(!dom.isFluid(i,j) || !dom.isFluid(i+1,j))
+	    uup=0.0;
+	  else
+	    uup=U(i,j);
+
+	  PSI.push_back(PSI[(j-1)*xmax+i]+uup*dely);
+	}
+	/*
+	if(dom.isFluid(i+1,j+1)){
+
+	  if(!dom.isFluid(i+1,j+2))
+	    uup=-vect[0][j*xmax+i];
+	  else
+	    uup=vect[0][(j+1)*xmax+i];
+
+	  if(!dom.isFluid(i+2,j+1))
+	    vright=-vect[1][j*xmax+i];
+	  else
+	    vright=vect[1][j*xmax+i+1];
+
+	  ZETA.push_back((uup-vect[0][j*xmax+i])/dely-(vright-vect[1][j*xmax+i])/delx);
+
+	  }else ZETA.push_back(0.0);*/
+
+	if(dom.isFluid(i,j) && dom.isFluid(i+1,j) && dom.isFluid(i,j+1) && dom.isFluid(i+1,j+1))
+	  ZETA.push_back((U(i,j+1)-U(i,j))/dely-(V(i+1,j)-V(i,j))/delx);
+	else
+	  ZETA.push_back(0.0);
+       
+      }
+
+
+
+      }
+
+  double MAX(Array& A, int xmax, int ymax,Data& dom){
+    double max =0.0;
+    for (int j=1;j<=ymax;++j)
+      for(int i=1;i<=xmax;++i){
+	if(A(i,j)>max && dom.isFluid(i,j))
+	  max=A(i,j);
+      }
+    
+    return max;
+    }
+
+  private:
+
+  const int xmax, ymax, maxit,bcE,bcW,bcN,bcS;
+  int fcell;
+  const double delx, dely,eps, omega,Re,gamma,gx,gy,tau,tend;
+  double dt,ppr,ppt,ppl,ppb;
+  double ut,ub,ur,ul,vtr,vtl,vbr,vbl; //Dummy cells for F
+  double vt,vb,vr,vl,utr,utl,ubr,ubl; //Dummy cells for G
+  vector<vector<double> > vect;
+  string nam,name;
+  vector<double> vect2,PSI,ZETA;
+  vector<double > length;
+  vector<int > dimension;
+};
+
+void Solver::inflow(Array& U, Array& V, Array& F,Array& G, double u,Data& dom){
+
+  for(int j=0;j<=ymax;++j){
+    if(dom.isFluid(1,j)){
+      if(dom.isFluid(1,j)){
+	U(0,j)=u;
+	F(0,j)=U(0,j);
+	V(0,j)=V(1,j);
+	G(0,j)=V(0,j);
+      }
+    } 
+  }
+}
+
+void Solver::SETBCOND(Array& U, Array& V, Array& F, Array& G){
+
+  for(int i=0;i<=xmax;++i){
+    for(int j=0;j<=ymax;++j){
+      
+      //left or west BC
+      if( i==0){
+	switch(bcW){
+	case NOSLIP: 
+	  U(0,j)=0.0;
+	  F(0,j)=U(0,j);
+	  V(0,j)=-V(1,j);
+	  G(0,j)=V(0,j);
+	  break;
+	case SLIP:
+	  U(0,j)=0.0;
+          F(0,j)=U(0,j);
+          V(0,j)=V(1,j);
+          G(0,j)=V(0,j);
+          break;
+	case OUTFLOW:
+	  U(0,j)=U(1,j);
+	  F(0,j)=U(0,j);
+	  V(0,j)=V(1,j);
+	  G(0,j)=V(0,j);
+	  break;
+	case PERIODIC:
+	  U(0,j)=U(xmax-1,j);
+	  F(0,j)=U(0,j);
+	  V(0,j)=(V(xmax,j)+V(xmax-1,j))-V(1,j);
+          G(0,j)=V(0,j);
+          break;
+	}
+      }
+      
+      //right or east BC
+      if(i==xmax){
+	switch(bcE){
+	case NOSLIP:
+	  U(xmax,j)=0.0;
+	  F(xmax,j)=U(xmax,j);
+	  V(xmax+1,j)=-V(xmax,j);
+	  G(xmax+1,j)=V(xmax+1,j);
+	  break;
+	case SLIP:
+	  U(xmax,j)=0.0;
+          F(xmax,j)=U(xmax,j);
+	  V(xmax+1,j)=V(xmax,j);
+          G(xmax+1,j)=V(xmax+1,j);
+          break;
+	case OUTFLOW:
+	  U(xmax,j)=U(xmax-1,j);
+          F(xmax,j)=U(xmax,j);
+	  V(xmax+1,j)=V(xmax,j);
+          G(xmax+1,j)=V(xmax+1,j);
+          break;
+	case PERIODIC:
+	  U(xmax,j)=U(1,j);
+          F(xmax,j)=U(xmax,j);
+	  V(xmax+1,j)=(V(1,j)+V(2,j))-V(xmax,j);
+          G(xmax+1,j)=V(xmax+1,j);
+          break;
+	}
+      }
+      
+      //bottom or south BC
+      if(j==0){
+      switch(bcS){
+      case NOSLIP:
+	U(i,0)=-U(i,1);
+	F(i,0)=U(i,0);
+	V(i,0)=0.0;
+	G(i,0)=V(i,0);
+	break;
+      case SLIP:
+	U(i,0)=U(i,1);
+        F(i,0)=U(i,0);
+        V(i,0)=0.0;
+        G(i,0)=V(i,0);
+	break;
+      case OUTFLOW:
+
+	U(i,0)=U(i,1);
+        F(i,0)=U(i,0);
+        V(i,0)=V(i,1);
+        G(i,0)=V(i,0);
+	break;
+      case PERIODIC:
+	U(i,0)=U(i,ymax)+U(i,ymax-1)-U(i,1);
+        F(i,0)=U(i,0);
+        V(i,0)=V(i,ymax-1);
+        G(i,0)=V(i,0);
+	break;
+      }
+      }
+
+      //top or north BC
+      if(j==ymax){
+	switch(bcN){
+	case NOSLIP:
+	  U(i,ymax+1)=-U(i,ymax);
+	  F(i,ymax+1)=U(i,ymax+1);
+	  V(i,ymax)=0.0;
+	  G(i,ymax)=V(i,ymax);
+	  break;
+	case SLIP:
+	  U(i,ymax+1)=U(i,ymax);
+          F(i,ymax+1)=U(i,ymax+1);
+          V(i,ymax)=0.0;
+          G(i,ymax)=V(i,ymax);
+	  break;
+	case OUTFLOW:
+	  U(i,ymax+1)=U(i,ymax);
+          F(i,ymax+1)=U(i,ymax+1);
+          V(i,ymax)=V(i,ymax-1);
+          G(i,ymax)=V(i,ymax);
+	case PERIODIC:
+	  U(i,ymax+1)=U(i,1)+U(i,2)-U(i,ymax);
+          F(i,ymax+1)=U(i,ymax+1);
+          V(i,ymax)=V(i,1);
+          G(i,ymax)=V(i,ymax);
+	}
+      }
+
+    }
+  }
+}
+
+
+
+void Solver::initFields(Array& U, Data& dom){
+      for (int i=1;i<xmax;++i){
+
+	for(int j=1;j<=ymax;++j){
+	
+	  if(j>(ymax/2) && dom.isFluid(i-1,j-1))
+	    U(i,j)=1.0;
+	  else
+	    U(i,j)=0.0;
+	}
+      }
+}
+
+
+
+
+
+bool Solver::poisson(Array& pp, Array& ff, Data& dom){
+  int count =1;
+  double res=1.0;
+  while(res>eps &&  count<=maxit){
+    res=0.0;
+    //SOR loop                                                                                                             
+    for (int j=1;j<=ymax;++j){                                                                                              
+      for(int i=1;i<=xmax;++i){
+      
+	if(dom.isFluid(i,j)){
+	  
+	  if(!dom.isFluid(i-1,j) && (i-1)!=0){
+	    ppl=dom.PP(pp,i-1,j,WEST);}
+	  else 
+	    ppl=pp(i-1,j);
+
+	  if(!dom.isFluid(i+1,j) && i!=xmax){
+            ppr=dom.PP(pp,i+1,j,EAST);}
+          else
+            ppr=pp(i+1,j);
+
+	  if(!dom.isFluid(i,j-1) && (j-1)!=0){
+            ppb=dom.PP(pp,i,j-1,SOUTH);}
+	    else
+            ppb=pp(i,j-1);
+
+	  if(!dom.isFluid(i,j+1) && j!= ymax)
+            ppt=dom.PP(pp,i,j+1,NORTH);
+          else
+            ppt=pp(i,j+1);
+
+	  pp(i,j)=(1-omega)*pp(i,j)+(omega/(2/pow(delx,2)+2/pow(dely,2)))*((((ppr+ppl)/pow(delx,2))+((ppt+ppb)/pow(dely,2)) \
+	    )-ff(i,j));
+
+	  /*pp(i,j)=(1-omega)*pp(i,j)+(omega/(2/pow(delx,2)+2/pow(dely,2)))*((((pp(i+1,j)+pp(i-1,j))/pow(delx,2))+((pp(i,j+1)+pp(i,j-1))/pow(dely,2))
+	    )-ff(i,j));*/
+	}
+
+	if(i==1)
+	  pp(0,j)=pp(i,j);
+	if(i==xmax)
+	  pp((xmax+1),j)=pp(i,j);
+	if(j==1)
+	  pp(i,0)=pp(i,j);
+	if(j==ymax)
+	  pp(i,(ymax+1))=pp(i,j);
+      }
+    }
+    //Residual calculation                                                                                                  
+    for (int i=1;i<=xmax;++i){
+      for(int j=1;j<=ymax;++j){
+	if(dom.isFluid(i,j)){
+
+	  if(!dom.isFluid(i-1,j) && (i-1)!=0){
+            ppl=dom.PP(pp,i-1,j,WEST);}
+          else
+            ppl=pp(i-1,j);
+
+          if(!dom.isFluid(i+1,j) && i!=xmax){
+            ppr=dom.PP(pp,i+1,j,EAST);}
+	  else
+            ppr=pp(i+1,j);
+
+          if(!dom.isFluid(i,j-1) && (j-1)!=0){
+            ppb=dom.PP(pp,i,j-1,SOUTH);}
+	  else
+            ppb=pp(i,j-1);
+
+          if(!dom.isFluid(i,j+1) && j!=ymax)
+            ppt=dom.PP(pp,i,j+1,NORTH);
+	  else
+            ppt=pp(i,j+1);
+	  res=res+pow((ff(i,j)-((ppr-2*pp(i,j)+ppl)/pow(delx,2)+(ppt+ppb-2*pp(i,j))/pow(dely,2))),2);
+	  // res=res+pow((ff(i,j)-((pp(i+1,j)-2*pp(i,j)+pp(i-1,j))/pow(delx,2)+(pp(i,j+1)+pp(i,j-1)-2*pp(i,j))/pow(dely,2))),2);
+	}
+      }
+    }
+    res=sqrt(res/dom.getNumFluid());                                                                                              
+    ++count;    
+  } //while loop ends   
+    if(count>1)return true;
+  else
+    return false;
+    
+}
+
+
+bool Solver::WriteResults(Array& U, string name, int xmax, int ymax, int mode){
+
+  name+=".dat";
+  ofstream Write(name);
+  Write.precision(15);
+
+  for (int j=0;j<=ymax;++j){
+
+      for(int i=0;i<=xmax;++i){
+
+	Write<<U(i,j)<<" ";
+    } 
+     Write<<"\n";
+  }
+
+  Write.close();
+
+  if(mode ==2){
+  FILE *fp;
+
+  char *ch;
+  ch=new char[name.size()+1];
+  strcpy(ch,name.c_str());
+  fp = popen("gnuplot -persist","w");
+  fprintf(fp, "set title 'Solution' \n");
+  fprintf(fp, "set xlabel 'x'\n");
+  fprintf(fp, "set ylabel 'y'\n");
+  fprintf(fp,"set pm3d \n");
+  fprintf(fp,"set view 25,320 \n")  ;
+  fprintf(fp,"splot '%s' with lines \n",ch);
+  pclose(fp);
+  }
+
+  if(!Write.is_open())
+    return true;
+  else return false;
+}
+
+
+void Solver::COMP_FG(Array&F, Array& G, Array&U,Array&V, Data& dom){
+
+  for(int j=0;j<=ymax;++j){
+    for(int i=0;i<=xmax;++i){
+   
+      if( i>0 && i<xmax && j>0 && j<=ymax && dom.isFluid(i,j) && dom.isFluid(i+1,j)){
+	
+	if(!dom.isFluid(i-1,j) && (i-1)!=0){
+	  ul=0.0;}
+	else
+	  ul=U(i-1,j);
+       
+
+	if(!dom.isFluid(i+2,j) && (i+1)!=xmax){
+	  ur=0.0;}
+	else
+	  ur=U(i+1,j);
+       
+     
+	if((dom.isFluid(i,j+1) && dom.isFluid(i+1,j+1)))
+	  ut=U(i,j+1);
+	else {if(j==ymax)
+	    ut=U(i,j+1);
+	  else {if(!dom.isFluid(i,j+1) && !dom.isFluid(i+1,j+1) && j!=ymax){
+	      ut=-(dom.UU(U,i,j+1,NORTH));}
+	    else {
+	      ut=0.0;}}}
+
+
+	if((dom.isFluid(i,j-1) && dom.isFluid(i+1,j-1)))
+	  ub=U(i,j-1);
+	else {if((j-1)==0)
+	  ub=U(i,j-1);
+	  else {if(!dom.isFluid(i,j-1) && !dom.isFluid(i+1,j-1) && (j-1)!=0){
+	      ub=-(dom.UU(U,i,j-1,SOUTH));}
+	    else{
+	      ub=0.0;}}}
+
+	
+	if(!dom.isFluid(i,j+1) && j!=ymax){
+	  vtl=0.0;}
+	else
+	  vtl=V(i,j);
+
+
+	if(!dom.isFluid(i,j-1) && (j-1)!=0){
+	  vbl=0.0;}
+	else
+	  vbl=V(i,j-1);
+
+
+	if(!dom.isFluid(i+1,j+1) && j!=ymax){
+	  vtr=0.0;}
+	else
+	  vtr=V(i+1,j);
+
+
+	if(!dom.isFluid(i+1,j-1) && (j-1)!=0){
+	  vbr=0.0;}
+	else
+	  vbr=V(i+1,j-1);
+      
+	
+	//	if( i>0 && i<xmax && j>0 && j<=ymax)
+	/*  F(i,j)=U(i,j)+dt*(						\
+	    (1/Re)*(((U(i+1,j)-2*U(i,j)+U(i-1,j))/pow(delx,2))+((U(i,j+1)-2*U(i,j)+U(i,j-1))/pow(dely,2))) \
+	    -(pow(((U(i+1,j)+U(i,j))/2),2)-pow(((U(i-1,j)+U(i,j))/2),2))/delx \
+	    -(gamma/delx)*(fabs((U(i+1,j)+U(i,j))/2)*((U(i,j)-U(i+1,j))/2)-fabs((U(i-1,j)+U(i,j))/2)*((U(i-1,j)-U(i,j))/2)) \
+	    -(1/dely)*(((V(i+1,j)+V(i,j))/2)*((U(i,j)+U(i,j+1))/2)-((V(i,j-1)+V(i+1,j-1))/2)*((U(i,j-1)+U(i,j))/2)) \
+	    -(gamma/dely)*(fabs((V(i+1,j)+V(i,j))/2)*((U(i,j)-U(i,j+1))/2)-fabs((V(i,j-1)+V(i+1,j-1))/2)*((U(i,j-1)-U(i,j))/2)) \
+	    +gx								\
+	    );*/
+	
+	
+	F(i,j)=U(i,j)+dt*(						\
+			  (1/Re)*(((ur-2*U(i,j)+ul)/pow(delx,2))+((ut-2*U(i,j)+ub)/pow(dely,2))) \
+			  -(pow(((ur+U(i,j))/2),2)-pow(((ul+U(i,j))/2),2))/delx \
+			  -(gamma/delx)*(fabs((ur+U(i,j))/2)*((U(i,j)-ur)/2)-fabs((ul+U(i,j))/2)*((ul-U(i,j))/2)) \
+			  -(1/dely)*(((vtr+vtl)/2)*((U(i,j)+ut)/2)-((vbl+vbr)/2)*((ub+U(i,j))/2)) \
+			  -(gamma/dely)*(fabs((vtr+vtl)/2)*((U(i,j)-ut)/2)-((fabs((vbl+vbr)/2)*((ub-U(i,j))/2)))) \
+			  +gx						\
+			  );
+	
+      }
+
+      if(i>0 && i<=xmax && j>0 && j<ymax && dom.isFluid(i,j) && dom.isFluid(i,j+1)){
+    
+	if(!dom.isFluid(i-1,j+1) && (i-1)!=0){
+	  utl=0.0;}
+	else
+	  utl=U(i-1,j+1);
+	
+	if(!dom.isFluid(i+1,j+1) && i!=xmax){
+	  utr=0.0;}
+	else
+	  utr=U(i,j+1);
+	
+	if(!dom.isFluid(i-1,j) && (i-1)!=0){
+	  ubl=0.0;}
+	else
+	  ubl=U(i-1,j);
+	
+	if(!dom.isFluid(i+1,j) && i!=xmax){
+	  ubr=0.0;}
+	else
+	  ubr=U(i,j);
+	
+	if(!dom.isFluid(i,j+2) && (j+1)!=ymax){
+	  vt=0.0;}
+	else 
+	  vt=V(i,j+1);
+	
+	if(!dom.isFluid(i,j-1) && (j-1)!=0){
+	  vb=0.0;}
+	else
+	  vb=V(i,j-1);
+	
+	if((dom.isFluid(i-1,j) && dom.isFluid(i-1,j+1)))
+	  vl=V(i-1,j);
+	else {if ((i-1)==0)
+	    vl=V(i-1,j);
+	  else {if(!dom.isFluid(i-1,j) && !dom.isFluid(i-1,j+1) && (i-1)!=0){
+	      vl=-(dom.VV(V,i-1,j,WEST));}
+	    else {
+	      vl=0.0;}}}
+	
+	if((dom.isFluid(i+1,j+1) && dom.isFluid(i+1,j)))
+	  vr=V(i+1,j);
+	else {if(i==xmax)
+	    vr=V(i+1,j);
+	  else {if(!dom.isFluid(i+1,j+1) && !dom.isFluid(i+1,j) && i!=xmax){
+	      vr=-(dom.VV(V,i+1,j,EAST));}
+	    else {
+	      vr=0.0;}}}
+	
+    
+	// if(i>0 && i<=xmax && j>0 && j<ymax)
+	/*      G(i,j)=V(i,j)+dt*(					\
+		(1/Re)*(((V(i+1,j)-2*V(i,j)+V(i-1,j))/pow(delx,2))+((V(i,j+1)-2*V(i,j)+V(i,j-1))/pow(dely,2))) \
+		-(pow(((V(i,j+1)+V(i,j))/2),2)-pow(((V(i,j-1)+V(i,j))/2),2))/dely \
+		-(gamma/dely)*(fabs((V(i,j+1)+V(i,j))/2)*((V(i,j)-V(i,j+1))/2)-fabs((V(i,j-1)+V(i,j))/2)*((V(i,j-1)-V(i,j))/2)) \
+		-(1/delx)*(((V(i+1,j)+V(i,j))/2)*((U(i,j)+U(i,j+1))/2)-((U(i-1,j)+U(i-1,j+1))/2)*((V(i-1,j)+V(i,j))/2)) \
+		-(gamma/delx)*(((-V(i+1,j)+V(i,j))/2)*fabs((U(i,j)+U(i,j+1))/2)-fabs((U(i-1,j)+U(i-1,j+1))/2)*((V(i-1,j)-V(i,j))/2)) \
+		+gy							\
+		);
+	*/
+    
+	G(i,j)=V(i,j)+dt*(						\
+			  (1/Re)*(((vr-2*V(i,j)+vl)/pow(delx,2))+((vt-2*V(i,j)+vb)/pow(dely,2))) \
+			  -(pow(((vt+V(i,j))/2),2)-pow(((vb+V(i,j))/2),2))/dely \
+			  -(gamma/dely)*(fabs((vt+V(i,j))/2)*((V(i,j)-vt)/2)-fabs((vb+V(i,j))/2)*((vb-V(i,j))/2)) \
+			  -(1/delx)*(((vr+V(i,j))/2)*((ubr+utr)/2)-((ubl+utl)/2)*((vl+V(i,j))/2)) \
+			  -(gamma/delx)*(((-vr+V(i,j))/2)*fabs((ubr+utr)/2)-fabs((ubl+utl)/2)*((vl-V(i,j))/2)) \
+			  +gy						\
+									);
+	
+      }
+    }
+  }
+}
+
+
+
+void Solver::COMP_RHS(Array &ff, Array& F,Array& G,Data& dom){
+  double Fr,Fl,Gt,Gb;
+  for (int i=1;i<=xmax;++i){                    
+    for(int j=1;j<=ymax;++j){
+      if(dom.isFluid(i,j)){
+
+	if(!dom.isFluid(i-1,j) && (i-1)!=0)
+	  Fl=0.0;
+	else 
+	  Fl=F(i-1,j);
+
+	if(!dom.isFluid(i,j-1) && (j-1)!=0)
+	  Gb=0.0;
+	else 
+	  Gb=G(i,j-1);
+
+	if(!dom.isFluid(i+1,j) && i!=xmax)
+	  Fr=0.0;
+	else
+	  Fr=F(i,j);
+
+	if(!dom.isFluid(i,j+1) && j!=ymax)
+	  Gt=0.0;
+	else
+	  Gt=G(i,j);
+	
+	ff(i,j)=(((Fr-Fl)/delx)+(Gt-Gb)/dely)/dt;
+	//ff(i,j)=(((F(i,j)-F(i-1,j))/delx)+(G(i,j)-G(i,j-1))/dely)/dt;
+      }
+    }
+  }
+}
+
+
+void Solver::ADAP_UV(Array &U, Array& V, Array & F, Array & G, Array &pp, Data& dom){
+
+  for(int j=0;j<=ymax;++j){
+    for(int i=0;i<=xmax;++i){
+
+      if( i>0 && i<xmax && j>0 && j<=ymax && dom.isFluid(i,j) && dom.isFluid(i+1,j)){
+	U(i,j)=F(i,j)-(dt/delx)*(pp(i+1,j)-pp(i,j));
+      }
+
+      if(i>0 && i<=xmax && j>0 && j<ymax && dom.isFluid(i,j) && dom.isFluid(i,j+1)){
+	V(i,j)=G(i,j)-(dt/dely)*(pp(i,j+1)-pp(i,j));
+      }
+   
+    }
+  }
+}
+
+void Solver::SOLVE(Array& pp, Array& ff, Array& U, Array& V, Array& F, Array& G, Data& dom,ParticleLine& Part, double xlength){
+
+
+  double t=0;
+  int n=0,n1=0;
+  ofstream f;
+  string strk("streak");
+  string dumstrk;
+  string tmp;
+  double kk=(Re/2)/(1/pow(delx,2)+1/pow(dely,2));
+  vector<StreakLine> SL;
+  
+  while(t<tend){
+  SETBCOND(U,V,F,G);
+  inflow(U,V,F,G,1.0,dom);
+  COMP_FG(F,G,U,V,dom);
+  COMP_RHS(ff,F,G,dom);
+  poisson( pp, ff,dom);
+  ADAP_UV(U, V, F, G, pp,dom);
+  t=t+dt;
+
+  Part.advanceParticles(dom,U,V,delx,dely,dt);
+
+  if(n1%3==0)
+    SL.push_back(StreakLine(2.5, 0.5, 2.5, 3.5,xmax,ymax,20));
+
+  for(size_t ii=0;ii<SL.size();++ii)
+    SL[ii].traceAndInject(dom,U, V, delx,dely,dt);
+
+  if(tau>0)
+    dt=tau*min({kk,delx/fabs(MAX(U,xmax-1,ymax,dom)),dely/abs(MAX(V,xmax,ymax-1,dom))});
+   
+  cout<<"time"<<n<<"="<<t<<endl;
+
+  if(n1%5==0){
+    AVG(U,V);
+    COMP_PSI_ZETA(dom,U,V);
+    Pres(pp);                                                                                                                                 
+    stringstream ss;
+    ss<<n;
+    nam=name+ss.str();
+    stringstream SS;
+    SS<<n;
+    dumstrk="./streakline/"+strk+SS.str()+".csv";
+    //cout<<dumstrk<<endl;
+    f.open(dumstrk,fstream::app);
+    f<<"X"<<","<<"Y"<<","<<"z"<<endl;
+    for(size_t ii=0;ii<SL.size();++ii){
+      vector<Particle>& pp=SL[ii].getCoords();
+      for(size_t jj=0; jj<20;++jj){
+	if(ceil(pp[jj].X)<xlength)
+	  f<<pp[jj].X<<","<<pp[jj].Y<<","<<0.0<<endl;
+      }
+    }
+
+    VTKFileWriter Wrt(dimension,length,nam);
+    Wrt.WriteVector(vect,"Velocity_magnitude");
+    Wrt.WriteScalar(vect2,"pressure");
+    Wrt.WriteScalar(PSI,"stream");
+    Wrt.WriteScalar(ZETA,"vorticity");
+    ++n;
+    f.close();
+  }                                                                                                                                          
+    ++n1;
+  }
+ 
+
+ //WriteResults(U, "U",xmax+1,ymax, 1);
+ //WriteResults(V, "V",xmax,ymax+1, 1);
+ //WriteResults(pp, "pp",xmax,ymax, 1);
+}
+#endif //SOLVER_HPP
+

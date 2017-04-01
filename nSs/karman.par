@@ -1,0 +1,62 @@
+# Problem specific Data:
+# ---------------------
+
+ name	       karman  #	specifier of problem
+
+ bcN           1      #         flags for boundary conditions
+ bcE           3      #         1 = no-slip      3 = outflow
+ bcS           1      #         2 = free-slip    4 = periodic
+ bcW           3
+
+ 
+ GX            0.0    #         Body forces (e.g. gravity)
+ GY            0.0    #
+
+ Re            1000	    #	Reynolds number
+
+ U_INIT        1.0              #   initial value for velocity in x-direction
+ V_INIT        0.0               #  initial value for velocity in y-direction
+ P_INIT        0.0                # initial value for pressure
+
+
+# Geometry Data:
+# -------------
+
+ xlength       30.0        #     domain size in x-direction
+ ylength       4.0	#	 domain size in y-direction
+ imax          100     #         number of interior cells in x-direction
+ jmax          30	#	 number of interior cells in y-direction
+
+
+# Time Data:
+# ---------
+
+ t_end         300 #		final time
+ delt          0.02  #            time stepsize
+ tau           0.5  #           factor for stepsize control (<0 constant delt)
+
+
+# Pressure Iteration Data:
+# -----------------------
+
+ itermax       200       #      maximal number of iterations in one time step
+ eps           0.001     #      stopping tolerance for pressure iteration
+ omg           1.75       #      relaxation parameter for SOR iteration
+ gamma         0.9       #      upwind differencing factor gamma
+
+# Visualization Data:
+# ------------------
+
+ t_visualize	40.0    #		time for starting visualization
+ delt_save	1.0	    #	time stepsize for saving particle data
+ delt_inject	1.0	    #	time stepsize for particle injection
+ streak_x1	1.0    	    #	Coordinates of line segment for particle injection
+ streak_y1	0.5	#
+ streak_x2	1.0	#
+ streak_y2	3.5	#
+ nparticles	      50    #      number of particles to inject 
+
+#==============================================================================
+
+#===============================================================================
+
